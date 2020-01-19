@@ -1,0 +1,265 @@
+---
+title: "Mucilage_Metagenome_Analysis"
+author: "Shawn Higdon"
+date: "7/6/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(taxa)
+library(metacoder)
+library(viridis)
+library(RColorBrewer)
+library(readr)
+library(dplyr)
+library(gridExtra)
+library(tidyverse)
+```
+
+# Data Import
+## OTU Table
+```{r}
+otu_data <- read_tsv("../Fig_0_Data_Formatting/muci_bac_otu_table.tsv")
+print(otu_data)
+```
+
+## TAX Table
+```{r}
+tax_data <- read_tsv("../Fig_0_Data_Formatting/muci_bac_tax_table.tsv")
+print(tax_data)
+```
+
+## Sample Table
+```{r}
+sample_data <- read_csv("mucilage_sample_map.csv", col_types = "cc")
+print(sample_data)
+```
+
+## Make one table
+```{r}
+# must be same type to join
+otu_data$OTU <- as.character(otu_data$OTU)
+tax_data$OTU <- as.character(tax_data$OTU)
+
+otu_data <- left_join(otu_data, tax_data,
+                           by = "OTU")
+
+print(otu_data)
+
+tail(colnames(otu_data), n = 10)
+
+head(otu_data$taxonomy)
+```
+
+```{r}
+tax_data %>%
+  summarise_each(funs(n_distinct))
+
+27/609
+```
+
+## Prepare Supp Table S6 for Manuscript 1
+
+```{r}
+colnames(otu_data)
+Table_S6 <- otu_data # clone otu_data
+
+Table_S6 <- Table_S6 %>% mutate(rel_ab = ((OLMM00 / sum(OLMM00)*100)))
+Table_S6$rel_ab <- round(Table_S6$rel_ab, digits = 2)
+#sum(Table_S6$rel_ab)
+Table_S6 <- Table_S6 %>%
+  select(rel_ab,
+         OLMM00,
+         OTU,
+         Kingdom,
+         Phylum,
+         Class,
+         Order,
+         Family,
+         Genus) %>%
+  arrange(desc(rel_ab)) ## arrange in descending order based on number of reads
+
+# remove prefixes for taxa names
+Table_S6 <- Table_S6 %>% mutate_at(vars("Kingdom","Phylum","Class","Order","Family","Genus"), ~str_remove(., "[a-z\\_]+"))
+
+# write table to csv
+write_csv(Table_S6, "./tables/Table_S6.csv", col_names = T)
+
+```
+
+## summarize metagenome observations - Table S7
+```{r}
+colnames(Table_S6)
+
+## Phylum RANKED
+Table_S7_p <- Table_S6 %>% 
+  group_by(Phylum) %>% 
+  count() %>% 
+  arrange(desc(n))
+Table_S7_p <- Table_S7_p %>% mutate(Level = "Phylum")
+Table_S7_p <- Table_S7_p %>% rename(Taxon = Phylum)
+
+## Class RANKED
+Table_S7_c <- Table_S6 %>%
+  group_by(Class) %>%
+  count() %>%
+  arrange(desc(n))
+Table_S7_c <- Table_S7_c %>% mutate(Level = "Class")
+Table_S7_c <- Table_S7_c %>% rename(Taxon = Class)
+
+
+## Order RANKED
+Table_S7_o <- Table_S6 %>%
+  group_by(Order) %>%
+  count() %>%
+  arrange(desc(n))
+Table_S7_o <- Table_S7_o %>% mutate(Level = "Order")
+Table_S7_o <- Table_S7_o %>% rename(Taxon = Order)
+
+
+## Family RANKED
+Table_S7_f <- Table_S6 %>%
+  group_by(Family) %>%
+  count() %>%
+  arrange(desc(n))
+Table_S7_f <- Table_S7_f %>% mutate(Level = "Family")
+Table_S7_f <- Table_S7_f %>% rename(Taxon = Family)
+
+
+## Genus RANKED
+Table_S7_g <- Table_S6 %>%
+  group_by(Genus) %>%
+  count() %>%
+  arrange(desc(n))
+Table_S7_g <- Table_S7_g %>% mutate(Level = "Genus")
+Table_S7_g <- Table_S7_g %>% rename(Taxon = Genus)
+
+## Merge
+Table_S7_all <- bind_rows(Table_S7_p,
+                          Table_S7_c,
+                          Table_S7_o,
+                          Table_S7_f,
+                          Table_S7_g) %>%
+  select("Level", "Taxon", "n")
+
+## write_csv
+write_csv(Table_S7_all, "./tables/Table_S7.csv", col_names = T)
+```
+
+
+## taxmap format
+```{r}
+muci_obj <- taxa::parse_tax_data(otu_data,
+                           class_cols = "taxonomy",
+                           class_sep = ";",
+                           class_regex = "^([a-z]{0,1})_{0,2}(.*)$",
+                           class_key = c("tax_rank" = "taxon_rank", "name" = "taxon_name"))
+
+# Inspect Taxon Names
+head(taxon_names(muci_obj))
+
+muci_obj$data$class_data
+
+names(muci_obj$data) <- "otu_counts"
+
+print(muci_obj)
+```
+
+
+### Visualize
+
+#### Phylum
+```{r}
+set.seed(2020)
+muci_obj %>% 
+  filter_taxa(taxon_ranks == "p", supertaxa = TRUE) %>%
+    heat_tree(node_label = taxon_names,
+          node_color = n_obs,
+          node_size = n_obs,
+          node_color_range = c("firebrick1", "goldenrod1", "springgreen", "dodgerblue"),
+          node_color_axis_label = "Frequency",
+          initial_layout = "re",
+          layout = "da",
+          output_file = "plots/muci_phylum.pdf"
+          )
+```
+
+#### Class
+```{r}
+set.seed(2020)
+muci_obj %>% 
+  filter_taxa(taxon_ranks == "c", supertaxa = TRUE) %>%
+    heat_tree(node_label = taxon_names,
+          node_color = n_obs,
+          node_size = n_obs,
+          node_color_range = c("firebrick1", "goldenrod1", "springgreen", "dodgerblue"),
+          node_color_axis_label = "Frequency",
+          initial_layout = "re",
+          layout = "da",
+          output_file = "plots/muci_class.pdf"
+          )
+```
+
+#### Order
+```{r}
+set.seed(2020)
+muci_obj %>% 
+  filter_taxa(taxon_ranks == "o", supertaxa = TRUE) %>%
+    heat_tree(node_label = taxon_names,
+          node_color = n_obs,
+          node_size = n_obs,
+          node_size_range = c(0.01, 0.05),
+          edge_size_range = c(0.002, 0.002),
+          node_color_range = c("firebrick1", "goldenrod1", "springgreen", "dodgerblue"),
+          node_color_axis_label = "Frequency",
+          initial_layout = "re",
+          layout = "da",
+          output_file = "plots/muci_order.pdf"
+          )
+```
+
+#### Family
+```{r}
+set.seed(2020)
+muci_obj %>% 
+  filter_taxa(taxon_ranks == "f", supertaxa = TRUE) %>%
+    heat_tree(node_label = taxon_names,
+          node_color = n_obs,
+          node_size = n_obs,
+          node_size_range = c(0.01, 0.05),
+          edge_size_range = c(0.002, 0.002),
+          repel_force = 10,
+          repel_iter = 10,
+          node_color_range = c("firebrick1", "goldenrod1", "springgreen", "dodgerblue"),
+          node_color_axis_label = "Frequency",
+          initial_layout = "re",
+          layout = "da",
+          output_file = "plots/muci_family.pdf"
+          )
+```
+
+#### Genus
+```{r}
+muci_obj %>% 
+  filter_taxa(taxon_ranks == "g", supertaxa = TRUE) %>%
+    heat_tree(node_label = taxon_names,
+          node_color = n_obs,
+          node_size = n_obs,
+          node_size_range = c(0.005, 0.015),
+          edge_size_range = c(0.002, 0.002),
+          repel_force = 5,
+          node_color_range = c("firebrick1", "goldenrod1", "springgreen", "dodgerblue"),
+          node_color_axis_label = "Frequency",
+          initial_layout = "fr",
+          layout = "da",
+          output_file = "plots/muci_genus.pdf"
+          )
+```
+
+
+
+
